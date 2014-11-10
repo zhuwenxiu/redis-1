@@ -360,6 +360,65 @@ void incrDecrCommand(redisClient *c, long long incr) {
     addReply(c,shared.crlf);
 }
 
+long long count = 0;
+
+void incrlimitDecrCommand(redisClient *c, long long incr) {
+  long long value, oldvalue;
+  robj *o, *new;
+
+  // 取出值对象
+  o = lookupKeyWrite(c->db,c->argv[1]);
+
+  // 检查对象是否存在，以及类型是否正确
+  if (o != NULL && checkType(c,o,REDIS_STRING)) return;
+
+  // 取出对象的整数值，并保存到 value 参数中
+  if (getLongLongFromObjectOrReply(c,o,&value,NULL) != REDIS_OK) return;
+
+  // 检查加法操作执行之后值释放会溢出
+  // 如果是的话，就向客户端发送一个出错回复，并放弃设置操作
+  oldvalue = value;
+  if ((incr < 0 && oldvalue < 0 && incr < (LLONG_MIN-oldvalue)) ||
+    (incr > 0 && oldvalue > 0 && incr > (LLONG_MAX-oldvalue))) {
+    addReplyError(c,"increment or decrement would overflow");
+    return;
+  }
+
+  // Check the limit.
+  if (count >= incr)
+  {
+	addReplyError(c,"increment exceeds the max count.");
+	new = -1;
+	goto incrDecrCommand_Exit;
+  }
+  
+  count++;
+  
+  // 进行加法计算，并将值保存到新的值对象中
+  // 然后用新的值对象替换原来的值对象
+  value += 1;
+  new = createStringObjectFromLongLong(value);
+  if (o)
+    dbOverwrite(c->db,c->argv[1],new);
+  else
+    dbAdd(c->db,c->argv[1],new);
+
+  // 向数据库发送键被修改的信号
+  signalModifiedKey(c->db,c->argv[1]);
+
+  // 发送事件通知
+  notifyKeyspaceEvent(REDIS_NOTIFY_STRING,"incrby",c->argv[1],c->db->id);
+
+  // 将服务器设为脏
+  server.dirty++;
+
+incrDecrCommand_Exit:
+  // 返回回复
+  addReply(c,shared.colon);
+  addReply(c,new);
+  addReply(c,shared.crlf);
+}
+
 void incrCommand(redisClient *c) {
     incrDecrCommand(c,1);
 }
@@ -373,6 +432,13 @@ void incrbyCommand(redisClient *c) {
 
     if (getLongLongFromObjectOrReply(c, c->argv[2], &incr, NULL) != REDIS_OK) return;
     incrDecrCommand(c,incr);
+}
+
+void inclimitCommand(redisClient *c) {
+    long long incr;
+
+    if (getLongLongFromObjectOrReply(c, c->argv[2], &incr, NULL) != REDIS_OK) return;
+    incrlimitDecrCommand(c,incr);
 }
 
 void decrbyCommand(redisClient *c) {
