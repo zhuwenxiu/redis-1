@@ -29,6 +29,7 @@
 
 #include "redis.h"
 #include <math.h> /* isnan(), isinf() */
+#include <stdio.h>
 
 /*-----------------------------------------------------------------------------
  * String Commands
@@ -377,6 +378,21 @@ void incrbyCommand(redisClient *c) {
     incrDecrCommand(c,incr);
 }
 
+long long g_limit = 0;
+
+void inclimitCommand(redisClient *c) {
+	long long limit;
+	if (getLongLongFromObjectOrReply(c, c->argv[2], &limit, NULL) != REDIS_OK) return;
+	if (g_limit >= limit)
+	{
+		addReplyLongLong(c, -1);
+		return;
+	}
+	incrDecrCommand(c, 1);
+	g_limit++;
+	/*addReplyLongLong(c, g_limit);*/
+}
+
 void decrbyCommand(redisClient *c) {
     long long incr;
 
@@ -456,16 +472,4 @@ void strlenCommand(redisClient *c) {
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
         checkType(c,o,REDIS_STRING)) return;
     addReplyLongLong(c,stringObjectLen(o));
-}
-
-void inclimitCommand(redisClient *c) {
-     long limit;
-
-      if (getLongFromObjectOrReply(c, c->argv[1], &limit, NULL) != REDIS_OK) return;
-      for(int i = 1; i < limit; i++)      
-      {
-           addReplyLongLong(c,i);
-      }
-      if(c==limit)
-          addReplyLongLong(c,-1);
 }
